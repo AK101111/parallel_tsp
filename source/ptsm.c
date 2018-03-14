@@ -25,11 +25,16 @@ Graph* populate_data(char* fileName, unsigned int numCities){
 	if(!ret)
 		return NULL;
 	
-	ret->numCities = numCities;
-	ret->distance = malloc(sizeof(int*)*numCities);
-	for(int i=0; i<numCities; ++i){
-		ret->distance[i] = malloc(sizeof(int)*numCities);
-		for(int j=0; j<numCities; ++j){
+	ret->numCities = numCities+1;
+	ret->distance = malloc(sizeof(int*)*(numCities+1));
+	for(int i=0; i<numCities+1; ++i){
+		if(i==0){
+			ret->distance[0] = calloc(numCities+1, (numCities+1)*sizeof(int));
+			continue;
+		}
+		ret->distance[i] = malloc(sizeof(int)*(numCities+1));
+		ret->distance[i][0] = 0;
+		for(int j=1; j<numCities+1; ++j){
 			if(!fscanf(file, "%d", &(ret->distance[i][j])))
 				return NULL;
 		}
@@ -59,10 +64,7 @@ int _pick_min(Graph *G, int city){
 /*
 	Picks min/second min weight outgoing edge from node
 */
-int _pick_next(Graph* G, int city, int length){
-	if(length == 1)
-		return _pick_min(G,city);
-
+int _pick_second(Graph* G, int city){
 	// fancy one pass second max of array
 	int min = INT_MAX;
 	int secondMin = INT_MAX;
@@ -73,7 +75,7 @@ int _pick_next(Graph* G, int city, int length){
 				min = G->distance[city][i];
 			}else if(G->distance[city][i] <= secondMin && 
 				G->distance[city][i] != min){
-				secondMin = min;
+				secondMin = G->distance[city][i];
 			}
 		}
 	}
@@ -85,12 +87,13 @@ int _pick_next(Graph* G, int city, int length){
 */
 void _tsp_recursive(Graph *G, float current_max, int current, 
 	int length, int threadId){
-	printf("%lf %d %d\n", current_max, current, length);
+	//printf("%lf %d %d\n", current_max, current, length);
 	if(length == G->numCities){
+		
 		// #pragma omp critical
-		if(current < bestLength){
+		if(current + G->distance[currentPath[threadId][length-1]][currentPath[threadId][0]] < bestLength){
 			// add lock safety
-			bestLength = current;
+			bestLength = current + G->distance[currentPath[threadId][length-1]][currentPath[threadId][0]];
 			bestIndex = threadId;
 			dirty[threadId] = 1;
 		}
@@ -100,19 +103,24 @@ void _tsp_recursive(Graph *G, float current_max, int current,
 			memcpy(finalPath[threadId], currentPath[threadId], (G->numCities)*sizeof(int));
 			dirty[threadId] = 0;
 		}
+		return;
 	}
 
 	for(int i=0; i<G->numCities; ++i){
-		if(!visited[threadId][i]){
+		if(!(visited[threadId][i])){
 			float bound = current_max;
-			int change =  _pick_min(G,i) + 
-						_pick_next(G,currentPath[threadId][length-1], length);
+			int change = _pick_min(G,i);
+			if(length == 1)
+				change += _pick_min(G,currentPath[threadId][length-1]);
+			else
+				change += _pick_second(G,currentPath[threadId][length-1]);
 			int wt = current + G->distance[currentPath[threadId][length-1]][i];
+			bound -= ((float)change/2.0);
 			//printf("done\n");
-			if(bound - change + wt < bestLength){
+			if(bound + wt < bestLength){
 				currentPath[threadId][length] = i;
 				visited[threadId][i] = 1;
-				_tsp_recursive(G, bound - (float)change/2, wt, 
+				_tsp_recursive(G, bound, wt, 
 					length+1, threadId);
 				// reset visited.
 				visited[threadId][i] =  0;
@@ -138,19 +146,22 @@ void solve_branch_bound(Graph *G, int numThreads){
 
 	float current_max = 0.0;
 	for(int i=0; i<G->numCities; ++i){
-		current_max += (float)_pick_next(G, i, 1)/2;
-		current_max += (float)_pick_next(G, i, 2)/2;
+		current_max += _pick_min(G, i);
+		current_max += _pick_second(G, i);
+		//printf("%f\n", current_max);
 	}
-
+	current_max /= 2.0;
 	// threadId
 	int threadId = 0;
 	visited[threadId][0] = 1;
 	currentPath[threadId][0] = 0;
-	_tsp_recursive(G, current_max, 0, 1, 0);
+	visited[threadId][1] = 1;
+	currentPath[threadId][1] = 1;
+	_tsp_recursive(G, current_max, 0, 2, 0);
 
 	printf("Best path: ");
-	for(int i=0; i<G->numCities; ++i){
-		printf("%d ",finalPath[bestIndex][i]);
+	for(int i=1; i<G->numCities; ++i){
+		printf("%d ",finalPath[bestIndex][i]-1);
 	}
 	printf("\n Distance: %d\n",bestLength);
 }

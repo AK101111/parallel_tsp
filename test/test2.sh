@@ -1,0 +1,9 @@
+./tsmoptimal.dms 4 ../data/cities4.txt
+./tsmoptimal.dms 5 ../data/cities5.txt
+./tsmoptimal.dms 6 ../data/cities6.txt
+./tsmoptimal.dms 7 ../data/cities7.txt
+./tsmoptimal.dms 8 ../data/cities8.txt
+./tsmoptimal.dms 9 ../data/cities9.txt
+./tsmoptimal.dms 10 ../data/cities10.txt
+./tsmoptimal.dms 11 ../data/cities11.txt
+./tsmoptimal.dms 12 ../data/cities12.txt
