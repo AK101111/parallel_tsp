@@ -85,7 +85,7 @@ int _pick_next(Graph* G, int city, int length){
 */
 void _tsp_recursive(Graph *G, float current_max, int current, 
 	int length, int threadId){
-
+	printf("%lf %d %d\n", current_max, current, length);
 	if(length == G->numCities){
 		// #pragma omp critical
 		if(current < bestLength){
