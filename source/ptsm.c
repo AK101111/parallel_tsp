@@ -44,20 +44,30 @@ Graph* populate_data(char* fileName, unsigned int numCities){
 	fclose(file);
 	return ret;
 }
-
+/*
 int _get(int threadId){
-	for(int i=0;i<NUM_THREADS; ++i)
-		if(threadInfo[i] == threadId)
-			return i;
-
+	int k = -1;
+	int j = -1;
+	bool switch = -1;
 	#pragma omp critical
-	for(int i=0; i<NUM_THREADS; ++i){
-		if(threadInfo[i] == -1){
-			threadInfo[i] = threadId;
-			return i;
+	{
+		for(int i=0;i<NUM_THREADS; ++i)
+			if(threadInfo[i] == threadId)
+				return i;
+		int j=-1;
+		for(int i=0; i<NUM_THREADS; ++i){
+			if(threadInfo[i] == -1){
+				threadInfo[i] = threadId;
+				j = i;
+				i = NUM_THREADS;
+			}
 		}
+		return j;
 	}
-}
+	return j;
+}*/
+
+int _get(int threadId){ return threadId;}
 
 /*
 	utility min function, inlined for max perf. 
@@ -98,29 +108,35 @@ int _pick_second(Graph* G, int city){
 	return secondMin;
 }
 
+void _tsp_recursive_serial(Graph *G, float current_max, int current, 
+	int length, int threadId);
 
 void _tsp_recursive_parallel(Graph *G, float current_max, int current, 
-	int length){
+	int length, int maxThreads){
 	// length == 2
 	if(length == G->numCities){
 		
-		if(current + G->distance[currentPath[0][length-1]][currentPath[0][0]] < bestLength){
-			bestLength = current + G->distance[currentPath[0][length-1]][currentPath[0][0]];
+		if(current + G->distance[currentPath[maxThreads][length-1]][currentPath[maxThreads][0]] < bestLength){
+			bestLength = current + G->distance[currentPath[maxThreads][length-1]][currentPath[maxThreads][0]];
 			bestIndex = 0;
-			dirty[0] = 1;
+			dirty[maxThreads] = 1;
 		}
 
 		// hack to move heavy computation out of lock
-		if(dirty[0]){
-			memcpy(finalPath[0], currentPath[0], (G->numCities)*sizeof(int));
-			dirty[0] = 0;
+		if(dirty[maxThreads]){
+			memcpy(finalPath[maxThreads], currentPath[maxThreads], (G->numCities)*sizeof(int));
+			dirty[maxThreads] = 0;
 		}
 		return;
 	}
-
+	omp_set_num_threads(maxThreads);
 	#pragma omp parallel for
 	for(int i=0; i<G->numCities; ++i){
+		//#pragma omp task
+		{
 		int threadId = _get(omp_get_thread_num());
+		if(threadId == -1)
+		    perror("more threads than cities\n");
 		if(!(visited[threadId][i])){
 			float bound = current_max;
 			int change = _pick_min(G,i);
@@ -139,6 +155,7 @@ void _tsp_recursive_parallel(Graph *G, float current_max, int current,
 				// reset visited.
 				visited[threadId][i] =  0;
 			}
+		}
 		}
 	}
 }
@@ -194,14 +211,14 @@ void solve_branch_bound(Graph *G, int numThreads){
 	if(!G)
 		return;
 	// initialization of working memory.
-	finalPath = malloc(sizeof(int*)*numThreads);
-	currentPath = malloc(sizeof(int*)*numThreads);
-	visited = malloc(sizeof(int*)*numThreads);
-	threadInfo = malloc(sizeof(int)*numThreads);
-	memset(threadId, -1, sizeof(int)*numThreads);
-	dirty = calloc(numThreads, sizeof(int)*numThreads);
+	finalPath = malloc(sizeof(int*)*(numThreads+1));
+	currentPath = malloc(sizeof(int*)*(numThreads+1));
+	visited = malloc(sizeof(int*)*(numThreads+1));
+	threadInfo = malloc(sizeof(int)*(numThreads+1));
+	memset(threadInfo, -1, sizeof(int)*(numThreads+1));
+	dirty = calloc(numThreads, sizeof(int)*(numThreads+1));
 
-	for(int i=0; i<numThreads; ++i){
+	for(int i=0; i<numThreads+1; ++i){
 		finalPath[i] = calloc(G->numCities, sizeof(int));
 		currentPath[i] = calloc(G->numCities, sizeof(int));
 		visited[i] = calloc(G->numCities, sizeof(int));
@@ -216,13 +233,17 @@ void solve_branch_bound(Graph *G, int numThreads){
 	current_max /= 2.0;
 
 	NUM_THREADS = numThreads;
-	// threadId = 0, master thread
-	int threadId = 0;
-	visited[threadId][0] = 1;
-	currentPath[threadId][0] = 0;
-	visited[threadId][1] = 1;
-	currentPath[threadId][1] = 1;
-	_tsp_recursive_parallel(G, current_max, 0, 2);
+	// threadId = NUM_THREADS, master thread
+	int threadId = NUM_THREADS;
+
+	#pragma omp parallel for
+	for(int i=0; i<NUM_THREADS; ++i){
+		visited[i][0] = 1;
+		currentPath[i][0] = 0;
+		visited[i][1] = 1;
+		currentPath[i][1] = 1;
+	}
+	_tsp_recursive_parallel(G, current_max, 0, 2, threadId);
 
 	printf("Best path: ");
 	for(int i=1; i<G->numCities; ++i){
