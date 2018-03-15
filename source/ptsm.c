@@ -8,6 +8,9 @@ int *dirty; 		// array which stores dirty bit of each thread
 					// denoting if that thread needs to update its 
 					// final path from its local path.
 int *threadInfo;
+int *firstMin;
+int *secondMin;
+
 int NUM_THREADS;
 
 volatile int bestLength = INT_MAX;	// Current Best, shared among all threads.
@@ -67,7 +70,7 @@ int _get(int threadId){
 	return j;
 }*/
 
-int _get(int threadId){ return threadId;}
+static inline int _get(int threadId) __attribute__((always_inline)){ return threadId;}
 
 /*
 	utility min function, inlined for max perf. 
@@ -76,36 +79,48 @@ int _Min(int a, int b){
 	return (a<b)?(a):(b);
 }
 
+void _precompute_bounds(Graph *G){
+	#pragma omp parallel for
+	for(int i=0; i<G->numCities; ++i){
+		int min = INT_MAX;
+		for(int j=0; j<G->numCities; ++j)
+			if(j != i)
+				min = _Min(min, G->distance[i][j]);
+		firstMin[i] = min;
+	}
+
+	#pragma omp parallel for
+	for(int i=0; i<G->numCities; ++i){
+		int min = INT_MAX;
+		int secondMin = INT_MAX;
+		for(int j=0; j<G->numCities; ++j){
+			if(j!=i){
+				if(G->distance[i][j] <= min){
+					secondMin = min;
+					min = G->distance[i][j];
+				}else if(G->distance[i][j] <= secondMin && 
+					G->distance[i][j] != min){
+					secondMin = G->distance[i][j];
+				}	
+			}
+		}
+		secondMin[i] = secondMin;
+	}
+	return;
+}
+
 /*
 	Picks min weight outgoing edge from node
 */
-int _pick_min(Graph *G, int city){
-	int min = INT_MAX;
-	for(int i=0; i<G->numCities; ++i)
-		if(i != city)
-			min = _Min(min, G->distance[city][i]);
-	return min;
+static inline int _pick_min(Graph *G, int city) __attribute__((always_inline)) {
+	return firstMin[city];
 }
 
 /*
 	Picks min/second min weight outgoing edge from node
 */
-int _pick_second(Graph* G, int city){
-	// fancy one pass second max of array
-	int min = INT_MAX;
-	int secondMin = INT_MAX;
-	for(int i=0; i<G->numCities; ++i){
-		if(i!=city){
-			if(G->distance[city][i] <= min){
-				secondMin = min;
-				min = G->distance[city][i];
-			}else if(G->distance[city][i] <= secondMin && 
-				G->distance[city][i] != min){
-				secondMin = G->distance[city][i];
-			}
-		}
-	}
-	return secondMin;
+static inline int _pick_second(Graph* G, int city) __attribute__((always_inline)){
+	return secondMin[city];
 }
 
 void _tsp_recursive_serial(Graph *G, float current_max, int current, 
@@ -216,7 +231,9 @@ void solve_branch_bound(Graph *G, int numThreads){
 	visited = malloc(sizeof(int*)*(numThreads+1));
 	threadInfo = malloc(sizeof(int)*(numThreads+1));
 	memset(threadInfo, -1, sizeof(int)*(numThreads+1));
-	dirty = calloc(numThreads, sizeof(int)*(numThreads+1));
+	dirty = calloc(numThreads+1, sizeof(int));
+	firstMin = calloc(G->numCities, sizeof(int));
+	secondMin = calloc(G->numCities, sizeof(int));
 
 	for(int i=0; i<numThreads+1; ++i){
 		finalPath[i] = calloc(G->numCities, sizeof(int));
