@@ -1,17 +1,15 @@
 #include "ptsm.h"
 #include <omp.h>
 
-int **finalPath;	//	best paths explored by different threads.
-int **currentPath;	//	current path of each thread.
-int **visited;		// visited array for each thread.
-int *dirty; 		// array which stores dirty bit of each thread
-					// denoting if that thread needs to update its 
-					// final path from its local path.
-int *threadInfo;
+int *finalPath;	//	best paths explored by different threads.
+//int *currentPath;	//	current path of each thread.
+//int *visited;		// visited array for each thread.
 int *firstMin;
 int *secondMin;
 
+int OFFSET;
 int NUM_THREADS;
+int LEVELS = 3;
 
 volatile int bestLength = INT_MAX;	// Current Best, shared among all threads.
 volatile int bestIndex =  -1;
@@ -70,7 +68,7 @@ int _get(int threadId){
 	return j;
 }*/
 
-static inline int _get(int threadId) __attribute__((always_inline)){ return threadId;}
+__attribute__((always_inline)) static inline int _get(int threadId, int p_level){ return (p_level*OFFSET) + threadId;}
 
 /*
 	utility min function, inlined for max perf. 
@@ -92,19 +90,19 @@ void _precompute_bounds(Graph *G){
 	#pragma omp parallel for
 	for(int i=0; i<G->numCities; ++i){
 		int min = INT_MAX;
-		int secondMin = INT_MAX;
+		int second = INT_MAX;
 		for(int j=0; j<G->numCities; ++j){
 			if(j!=i){
 				if(G->distance[i][j] <= min){
-					secondMin = min;
+					second = min;
 					min = G->distance[i][j];
-				}else if(G->distance[i][j] <= secondMin && 
+				}else if(G->distance[i][j] <= second && 
 					G->distance[i][j] != min){
-					secondMin = G->distance[i][j];
+					second = G->distance[i][j];
 				}	
 			}
 		}
-		secondMin[i] = secondMin;
+		secondMin[i] = second;
 	}
 	return;
 }
@@ -112,134 +110,82 @@ void _precompute_bounds(Graph *G){
 /*
 	Picks min weight outgoing edge from node
 */
-static inline int _pick_min(Graph *G, int city) __attribute__((always_inline)) {
+__attribute__((always_inline)) static inline int _pick_min(Graph *G, int city){
 	return firstMin[city];
 }
 
 /*
 	Picks min/second min weight outgoing edge from node
 */
-static inline int _pick_second(Graph* G, int city) __attribute__((always_inline)){
+__attribute__((always_inline)) static inline int _pick_second(Graph* G, int city){
 	return secondMin[city];
 }
 
 void _tsp_recursive_serial(Graph *G, float current_max, int current, 
-	int length, int threadId);
+	int length, int *currentPath, int *visited);
 
 void _tsp_recursive_parallel(Graph *G, float current_max, int current, 
-	int length, int maxThreads){
-	// length == 2
+	int length, int *currentPath, int *visited){
 	if(length == G->numCities){
-		
-		if(current + G->distance[currentPath[maxThreads][length-1]][currentPath[maxThreads][0]] < bestLength){
-			bestLength = current + G->distance[currentPath[maxThreads][length-1]][currentPath[maxThreads][0]];
-			bestIndex = 0;
-			dirty[maxThreads] = 1;
-		}
-
-		// hack to move heavy computation out of lock
-		if(dirty[maxThreads]){
-			memcpy(finalPath[maxThreads], currentPath[maxThreads], (G->numCities)*sizeof(int));
-			dirty[maxThreads] = 0;
+		#pragma omp critical		
+		if(current + G->distance[currentPath[length-1]][currentPath[0]] < bestLength){
+			bestLength = current + G->distance[currentPath[length-1]][currentPath[0]];
+			memcpy(finalPath, currentPath, (G->numCities)*sizeof(int));
 		}
 		return;
 	}
-	omp_set_num_threads(maxThreads);
-	#pragma omp parallel for
-	for(int i=0; i<G->numCities; ++i){
-		//#pragma omp task
-		{
-		int threadId = _get(omp_get_thread_num());
-		if(threadId == -1)
-		    perror("more threads than cities\n");
-		if(!(visited[threadId][i])){
+	
+	//v#pragma omp parallel for
+	//#pragma omp parallel for firstprivate(currentPath, visited)
+	#pragma omp parallel for firstprivate(currentPath, visited) if(length<LEVELS)
+	for(int i=2; i<G->numCities; ++i){
+	//#pragma omp task untied if(length<LEVELS)
+	{
+		if(!(visited[i])){
 			float bound = current_max;
 			int change = _pick_min(G,i);
 			if(length == 1)
-				change += _pick_min(G,currentPath[threadId][length-1]);
+				change += _pick_min(G,currentPath[length-1]);
 			else
-				change += _pick_second(G,currentPath[threadId][length-1]);
-			int wt = current + G->distance[currentPath[threadId][length-1]][i];
+				change += _pick_second(G,currentPath[length-1]);
+			int wt = current + G->distance[currentPath[length-1]][i];
 			bound -= ((float)change/2.0);
-			//printf("done\n");
+			
 			if(bound + wt < bestLength){
-				currentPath[threadId][length] = i;
-				visited[threadId][i] = 1;
-				_tsp_recursive_serial(G, bound, wt, 
-					length+1, threadId);
+				//int *newPath = alloca(sizeof(int)*(G->numCities));
+				//int *newVisited = alloca(sizeof(int)*(G->numCities));
+			//	memcpy(newPath, currentPath, sizeof(int)*length);
+			//	memcpy(newVisited, visited, sizeof(int)*(G->numCities));
+				currentPath[length] = i;
+				visited[i] = 1;
+				
+				_tsp_recursive_parallel(G, bound, wt, 
+					length+1, currentPath, visited);
 				// reset visited.
-				visited[threadId][i] =  0;
+				visited[i] =  0;
 			}
 		}
-		}
+	}
+//	#pragma omp taskwait
 	}
 }
 /*
 	Recursive tsp with b&b.
 */
-void _tsp_recursive_serial(Graph *G, float current_max, int current, 
-	int length, int threadId){
-	//printf("%lf %d %d\n", current_max, current, length);
-	if(length == G->numCities){
-		
-		#pragma omp critical
-		if(current + G->distance[currentPath[threadId][length-1]][currentPath[threadId][0]] < bestLength){
-			bestLength = current + G->distance[currentPath[threadId][length-1]][currentPath[threadId][0]];
-			bestIndex = threadId;
-			dirty[threadId] = 1;
-		}
-
-		// hack to move heavy computation out of lock
-		if(dirty[threadId]){
-			memcpy(finalPath[threadId], currentPath[threadId], (G->numCities)*sizeof(int));
-			dirty[threadId] = 0;
-		}
-		return;
-	}
-
-	
-	for(int i=0; i<G->numCities; ++i){
-		
-		if(!(visited[threadId][i])){
-			float bound = current_max;
-			int change = _pick_min(G,i);
-			if(length == 1)
-				change += _pick_min(G,currentPath[threadId][length-1]);
-			else
-				change += _pick_second(G,currentPath[threadId][length-1]);
-			int wt = current + G->distance[currentPath[threadId][length-1]][i];
-			bound -= ((float)change/2.0);
-			//printf("done\n");
-			if(bound + wt < bestLength){
-				currentPath[threadId][length] = i;
-				visited[threadId][i] = 1;
-				_tsp_recursive_serial(G, bound, wt, 
-					length+1, threadId);
-				// reset visited.
-				visited[threadId][i] =  0;
-			}
-		}
-	}
-}
 
 void solve_branch_bound(Graph *G, int numThreads){
 	if(!G)
 		return;
 	// initialization of working memory.
-	finalPath = malloc(sizeof(int*)*(numThreads+1));
-	currentPath = malloc(sizeof(int*)*(numThreads+1));
-	visited = malloc(sizeof(int*)*(numThreads+1));
-	threadInfo = malloc(sizeof(int)*(numThreads+1));
-	memset(threadInfo, -1, sizeof(int)*(numThreads+1));
-	dirty = calloc(numThreads+1, sizeof(int));
+	NUM_THREADS = numThreads;
+
 	firstMin = calloc(G->numCities, sizeof(int));
 	secondMin = calloc(G->numCities, sizeof(int));
 
-	for(int i=0; i<numThreads+1; ++i){
-		finalPath[i] = calloc(G->numCities, sizeof(int));
-		currentPath[i] = calloc(G->numCities, sizeof(int));
-		visited[i] = calloc(G->numCities, sizeof(int));
-	}
+	finalPath = calloc(G->numCities, sizeof(int));
+	int *currentPath = calloc(G->numCities, sizeof(int));
+	int *visited = calloc(G->numCities, sizeof(int));
+	
 
 	float current_max = 0.0;
 	for(int i=0; i<G->numCities; ++i){
@@ -249,22 +195,19 @@ void solve_branch_bound(Graph *G, int numThreads){
 	}
 	current_max /= 2.0;
 
-	NUM_THREADS = numThreads;
-	// threadId = NUM_THREADS, master thread
-	int threadId = NUM_THREADS;
+	omp_set_nested(1);
+	omp_set_dynamic(1);
+	omp_set_num_threads(NUM_THREADS);
+	visited[0] = 1;
+	currentPath[0] = 0;
+	visited[1] = 1;
+	currentPath[1] = 1;
 
-	#pragma omp parallel for
-	for(int i=0; i<NUM_THREADS; ++i){
-		visited[i][0] = 1;
-		currentPath[i][0] = 0;
-		visited[i][1] = 1;
-		currentPath[i][1] = 1;
-	}
-	_tsp_recursive_parallel(G, current_max, 0, 2, threadId);
-
+	_tsp_recursive_parallel(G, current_max, 0, 2, currentPath, visited);
+	
 	printf("Best path: ");
 	for(int i=1; i<G->numCities; ++i){
-		printf("%d ",finalPath[bestIndex][i]-1);
+		printf("%d ",finalPath[i]-1);
 	}
 	printf("\n Distance: %d\n",bestLength);
 }

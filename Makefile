@@ -1,6 +1,6 @@
 CC		= gcc
 
-CFLAGS		= -g  -Wall -fopenmp
+CFLAGS		= -g -Wall -fopenmp
 
 CLIBS		= -lm 
 
