@@ -4,15 +4,16 @@
 int *finalPath;	//	best paths explored by different threads.
 
 volatile int bestLength = INT_MAX;	// Current Best, shared among all threads.
-volatile int bestIndex =  -1;
-
-unsigned long long int fact[25];
+volatile long long int bestIndex =  -1;
+int NUM_THREADS=1;
+long long int fact[25];
 
 void init_facts(){
-	unsigned long long int r = 1;
-	for(unsigned long long int i=1; i<25; ++i){
+	long long int r = 1;
+	fact[0] = 1;
+	for(long long int i=1; i<20; ++i){
 		r *= i;
-		facts[i] = r;
+		fact[i] = r;
 	}
 }
 
@@ -44,41 +45,47 @@ Graph* populate_data(char* fileName, unsigned int numCities){
 	return ret;
 }
 
+void print(int a[], int n){
+	for(int i=0; i<n;++i)
+		printf("%d ",a[i]);
+	printf("\n");
+}
+
 void _tsp(Graph *G){
-	for(unsigned long long int k= 0; k<facts[(G->numCities)-1]; ++k){
+	#pragma omp parallel for schedule(dynamic) num_threads(NUM_THREADS)
+	for(long long int k= 0; k<fact[(G->numCities)-1]; ++k){
 		int num[20];
+		int curr = 0;
+		int bestSample = bestLength;
 		int l = -1;
 		for (int i = 0; i < G->numCities; ++i)
-        	num[i] = i;
-        for (int i = 1; i < G->numCities; ++i) {
-        	int facts = fact[(G->numCities)-i-2];
-        	int incr = k / facts;
-        	int t = num[i+incr];
-        	for (int j = i+incr; j > i; j--)
-            	num[j] = num[j-1];
-        	num[i] = t;
-        	k %= facts;
-    	}
-
-    	int curr = 0;
-
-    	int bestSample = bestLength;
-
-    	for(int i=0; i<G->numCities-1; ++i){
-    		curr += G->distance[num[i]][num[i+1]];
-    		if(curr > bestLength){
-    			l = 1;
-    			break;
+        		num[i] = i;
+        	long long int kk = k;
+		for (int i = 1; i < G->numCities; ++i) {
+        		long long int facts = fact[(G->numCities)-i-1];
+        		int incr = kk / facts;
+	        	int t = num[i+incr];
+        		for (int j = i+incr; j > i; j--)
+            			num[j] = num[j-1];
+	        	num[i] = t;
+			curr += G->distance[num[i-1]][num[i]];
+			if(curr > bestSample){
+				l = 1;
+				break;
+			}
+        		kk %= facts;
+    		}
+		if(l == 1)
+			continue;
+		//print(num,G->numCities);
+    		if(l == -1){
+    			#pragma omp critical
+    			if(curr < bestLength){
+    				bestLength = curr;
+    				bestIndex = k;
+    			}
     		}
     	}
-    	if(l == -1){
-    		#pragma omp critical
-    		if(curr < bestLength){
-    			bestLength = curr;
-    			bestIndex = k;
-    		}
-    	}
-    }
 }
 /*
 	Recursive tsp with b&b.
@@ -89,26 +96,24 @@ void solve_branch_bound(Graph *G, int numThreads){
 		return;
 	// initialization of working memory.
 	NUM_THREADS = numThreads;
-
 	finalPath = calloc(G->numCities, sizeof(int));
-
+	init_facts();
 	omp_set_dynamic(1);
-	omp_set_num_threads(NUM_THREADS);
-	
+	omp_set_num_threads(numThreads);
 	_tsp(G);
-
+	
 	for (int i = 0; i < G->numCities; ++i)
-        finalPath[i] = i;
-
-    for (int i = 1; i < G->numCities; ++i) {
-        int facts = fact[(G->numCities)-i-2];
-        int incr = bestIndex / facts;
-        int t = finalPath[i+incr];
-        for (int j = i+incr; j > i; j--)
-           	finalPath[j] = finalPath[j-1];
-       	finalPath[i] = t;
-       	bestIndex %= facts;
-    }
+        	finalPath[i] = i;
+	
+	for (int i = 1; i < G->numCities; ++i) {
+		int facts = fact[(G->numCities)-i-1];
+		int incr = bestIndex / facts;
+		int t = finalPath[i+incr];
+        	for (int j = i+incr; j > i; j--)
+           		finalPath[j] = finalPath[j-1];
+       		finalPath[i] = t;
+       		bestIndex %= facts;
+    	}
 	
 	printf("Best path: ");
 	for(int i=0; i<G->numCities; ++i){
