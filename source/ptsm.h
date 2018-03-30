@@ -7,7 +7,7 @@
 #include <string.h>
 
 typedef struct Graph{
-  int numCities;
+  short numCities;
   int** distance;
 }Graph;
 
