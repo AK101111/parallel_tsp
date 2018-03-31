@@ -2,7 +2,10 @@
 
 int main(int argc, char **argv){
 	if(argc < 4){
-		printf("Usage ./ptsm x t filename.txt \n Where : \n x is the number of cities \n t is the number of threads \n filename.txt is the file that contains the distance matrix\n");
+		printf("Usage ./ptsm x t filename.txt \n Where /
+			: \n x is the number of cities \n t is the /
+			number of threads \n filename.txt is the /
+			file that contains the distance matrix\n");
 		return 0;
 	}
 	int numCities = atoi(argv[1]);
