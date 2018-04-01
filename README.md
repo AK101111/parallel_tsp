@@ -1,2 +1,118 @@
+﻿
 # parallel_tsp
-Branch and Bound version of the Travelling Salesman Problem
+
+Parallelizing the Travelling Salesman Problem using OPENMP.
+
+
+----------
+
+
+Primarily two approaches have been utilised for this.
+
+1. Branch and Bound, Recursive Variant
+2. Exhaustive state space search
+3. \* with simple pruning 
+
+## Requirements
+For running the base build, openmp based C compilers are required. This code has been tested with gcc 6.4-0.
+Any of the given builds for testing are platform dependent and can be tested on any of the crunchy1,3,5 machines available on the Courant Computing Cluster.
+ 
+
+## Running
+To build the code, use:
+```
+make
+```
+Running the code is easy, simply:
+```
+./main <num-cities> <num-threads> <distance-file>
+```
+The \<distance-file> is a file consisting \<num-cities> lines with \<num-cities> numbers (int32) in each of them. So in total, it represents a N*N matrix of distances in which i-j'th element denotes the distance between the i'th and the j'th city.
+
+By default the 3rd variant of search is utilised and can be changed to the first/second variant by swapping ptsm.c by ptsm2.c.
+
+
+----------
+
+
+### 1. Branch and Bound 
+This version is a recursive parallel implementation found in source/ptsm2.c.
+Currently, it only supports parallelization in the O(num Cities).
+Basically each sibling of the first level of search (depth = 1) are parallelized on different threads. 
+The level of parallelization has shared best Path and the current best Solution. So multiple threads provide very fast convergence in the solution and thus prunes the state space very effectively.
+This code has been shown to run TSP for upto 20 cities with <20 number of threads [AMD Opteron(TM) Processor 6272 * 4, 256GB Ram].
+
+<b> This version is very effecient for smaller problem size as the degree of parallelization of the implementation is botllenecked by the numCities.
+And as the problem takes computational time exponential in the number of cities, this speedup is insignificant for larger problem sizes. <b>
+
+
+----------
+
+
+### 2. Exhaustive state space search with simple pruning
+This implementation is very effecient as the speedup is:
+ <b><center>O(max(num processors, factorial(numcities)))<b><center>
+
+The implementation simply generates all the states of the search space on different threads (as long as multiple threads are available, otherwise wait). The pruning is very naive and only terminates a state if current value of sum of distances of that partial state is greater than the global minimum observed so far.
+
+## Analysis
+
+Time taken by branch and bound recursive*.
+
+								Num Threads
+|  |  |  |  |  |  |  |  |  |  |  |  |  |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Num Cities | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 20 | 30 |
+|5|0.009| 0.012| 0.012| 0.01| 0.01| 0.01| 0.01| 0.01| 0.01| 0.011| 0.01| 0.011|
+|6|0.01| 0.01| 0.01| 0.01| 0.012| 0.01| 0.011| 0.011| 0.01| 0.012| 0.01| 0.011|
+|7|0.008| 0.01| 0.011| 0.011| 0.01| 0.01| 0.01| 0.009| 0.01| 0.01| 0.01| 0.009|
+|8|0.009| 0.01| 0.01| 0.01| 0.01| 0.01| 0.01| 0.01| 0.009| 0.009| 0.01| 0.011|
+|9|0.011| 0.011| 0.011| 0.01| 0.009| 0.012| 0.012| 0.011| 0.01| 0.01| 0.01| 0.01|
+|10|0.015| 0.013| 0.012| 0.013| 0.012| 0.011| 0.01| 0.01| 0.01| 0.01| 0.01| 0.011|
+|11|0.084| 0.051| 0.042| 0.032| 0.04| 0.026| 0.027| 0.026| 0.026| 0.026| 0.019| 0.02|
+|12|0.653| 0.358| 0.248| 0.197| 0.316| 0.136| 0.14| 0.139| 0.138| 0.131| 0.077| 0.078|
+
+										*Time indicated in s
+
+Time taken by exhaustive search with simple pruning xTreme Parallelization*.
+
+								Num Threads
+|  |  |  |  |  |  |  |  |  |  |  |  |  |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Num Cities | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 20 | 30 |
+| 5 | 0.003 | 0.003 | 0.003 | 0.003 | 0.003 | 0.003 | 0.003 | 0.003 | 0.003 | 0.003 | 0.00467 | 0.00533 |
+| 6 | 0.003 | 0.003 | 0.003 | 0.003 | 0.003 | 0.003 | 0.003 | 0.003 | 0.003 | 0.003 | 0.00567 | 0.005 |
+| 7 | 0.003 | 0.003 | 0.003 | 0.003 | 0.003 | 0.003 | 0.003 | 0.003 | 0.003 | 0.003 | 0.00467 | 0.00467 |
+| 8 | 0.00433 | 0.004 | 0.003 |0.003 |0.003 |0.003 |0.003 |0.003 |0.003 |0.003 | 0.00467 | 0.00467 |
+| 9 | 0.017 | 0.010 | 0.008 | 0.007 | 0.006 | 0.00533 | 0.00533 | 0.005 | 0.005 | 0.005 | 0.005 | 0.005 |
+| 10 | 0.143 | 0.077 | 0.052 | 0.040 | 0.033 | 0.028 | 0.025 | 0.022 | 0.020 | 0.018 | 0.012 | 0.010 |
+| 11 | 1.723 | 0.890 | 0.607 | 0.460 | 0.359 | 0.309 | 0.270 | 0.234 | 0.207 | 0.183 | 0.099 | 0.070 |
+| 12 | 21.842 | 11.412 | 7.621 | 5.794 | 4.640 | 3.867 | 3.294 | 2.86 | 2.584 | 2.357 | 1.191 | 0.827 |
+
+										*Time indicated in s
+## Plots
+The plots showing speedup over single-thread version for both the  problem of size 5 cities and 10 cities is shown below for the second implementation. The x-axis the number of threads (1 to num of cities) and y-axis is the <b>(1/total time)<b> generated by time command. 
+												*<small> averaged over (~5) times. <small>
+
+Inline-style: 
+![alt text](https://github.com/adam-p/markdown-here/raw/master/src/common/images/icon48.png "Logo Title Text 1")
+ 
+ 
+
+
+----------
+
+
+## CPU INFO
+
+cat /proc/cpuinfo 
+siblings	: 16
+core id		: 0
+cpu cores	: 8
+apicid		: 0
+bogomips	: 4199.89
+TLB size	: 1536 4K pages
+clflush size	: 64
+cache alignment	: 64
+address sizes	: 48 bits physical, 48 bits virtual
+num processors	: 64
